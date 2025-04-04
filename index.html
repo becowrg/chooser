@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chooser</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Basic styling for the pointer */
+        .pointer {
+            width: 0;
+            height: 0;
+            border-left: 15px solid transparent;
+            border-right: 15px solid transparent;
+            border-top: 30px solid #333; /* Pointer color */
+            position: absolute;
+            top: -25px; /* Position above the wheel */
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10; /* Ensure pointer is above the wheel */
+        }
+        /* Style for the winner popup */
+        #winnerPopup {
+            transition: opacity 0.5s ease-in-out, transform 0.5s ease-in-out;
+        }
+        /* Prevent selecting text on the wheel during spin */
+        canvas {
+            user-select: none;
+            -webkit-user-select: none; /* Safari */
+            -moz-user-select: none; /* Firefox */
+            -ms-user-select: none; /* IE10+ */
+        }
+        /* Custom font (optional, example using a Google Font) */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-100 to-purple-100 min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="w-full max-w-4xl bg-white rounded-xl shadow-2xl p-6 md:p-10 flex flex-col lg:flex-row items-center lg:items-start gap-8">
+
+        <div class="flex-shrink-0 w-full lg:w-1/2 flex flex-col items-center">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800 mb-6 text-center">Random Chooser</h1>
+
+            <div class="relative mb-6 w-72 h-72 md:w-96 md:h-96">
+                <div class="pointer"></div>
+                <canvas id="wheelCanvas" width="400" height="400" class="rounded-full shadow-lg w-full h-full"></canvas>
+            </div>
+
+            <button id="spinButton" class="bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white font-bold py-3 px-8 rounded-full shadow-md transition-transform duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-xl">
+                SPIN!
+            </button>
+        </div>
+
+        <div class="w-full lg:w-1/2 flex flex-col items-center lg:items-start lg:pt-16">
+             <h2 class="text-xl font-semibold text-gray-700 mb-3 text-center lg:text-left">Enter Names (one per line):</h2>
+            <textarea id="nameInput" rows="10" class="w-full p-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none mb-4" placeholder="Alice\nBob\nCharlie\nDavid"></textarea>
+             <p class="text-sm text-gray-500 text-center lg:text-left">The wheel updates automatically as you type.</p>
+        </div>
+
+    </div>
+
+    <div id="winnerPopup" class="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 opacity-0 pointer-events-none transform scale-95">
+        <div class="bg-white rounded-xl shadow-2xl p-8 md:p-12 text-center relative max-w-md w-full">
+            <button id="closePopup" class="absolute top-3 right-3 text-gray-500 hover:text-gray-800 text-2xl font-bold">&times;</button>
+            <h2 class="text-2xl md:text-3xl font-bold text-indigo-600 mb-4">Congratulations!</h2>
+            <p class="text-4xl md:text-5xl font-extrabold text-gray-800 mb-6" id="winnerName"></p>
+            <button id="removeWinnerButton" class="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-5 rounded-full shadow-md transition-transform duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-400 mr-2">
+                Remove Winner
+            </button>
+             <button id="keepWinnerButton" class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold py-2 px-5 rounded-full shadow-md transition-transform duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-400">
+                Keep Winner
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('wheelCanvas');
+        const ctx = canvas.getContext('2d');
+        const nameInput = document.getElementById('nameInput');
+        const spinButton = document.getElementById('spinButton');
+        const winnerPopup = document.getElementById('winnerPopup');
+        const winnerNameDisplay = document.getElementById('winnerName');
+        const closePopupButton = document.getElementById('closePopup');
+        const removeWinnerButton = document.getElementById('removeWinnerButton');
+        const keepWinnerButton = document.getElementById('keepWinnerButton');
+
+        let names = [];
+        let colors = [];
+        let currentAngle = 0; // Tracks the current rotation angle of the wheel (in radians)
+        let spinAngleStart = 0;
+        let spinTime = 0;
+        let spinTimeTotal = 0;
+        let isSpinning = false;
+        let animationFrameId = null;
+        let lastWinner = null; // Store the last winning name
+
+        const wheelRadius = canvas.width / 2;
+        const textRadius = wheelRadius * 0.75; // Radius for text placement
+        const center = wheelRadius; // Center X and Y
+        const PI2 = Math.PI * 2; // Cache 2 * PI for efficiency
+
+        // --- Initialization ---
+
+        // Function to generate distinct colors using HSL
+        function generateColors(count) {
+            const generatedColors = [];
+            const saturation = 70; // Saturation percentage
+            const lightness = 60; // Lightness percentage
+            for (let i = 0; i < count; i++) {
+                const hue = (360 / count) * i;
+                generatedColors.push(`hsl(${hue}, ${saturation}%, ${lightness}%)`);
+            }
+            // Shuffle colors for better distribution if needed (optional)
+             shuffleArray(generatedColors);
+            return generatedColors;
+        }
+
+        // Fisher-Yates (aka Knuth) Shuffle
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+
+        // --- Drawing Functions ---
+
+        function drawWheel() {
+            const numNames = names.length;
+            if (numNames === 0) {
+                // Draw a placeholder wheel if no names
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.beginPath();
+                ctx.arc(center, center, wheelRadius - 5, 0, PI2);
+                ctx.fillStyle = '#e0e0e0'; // Light gray
+                ctx.fill();
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#888';
+                ctx.font = '16px Inter';
+                ctx.fillText('Add names below', center, center);
+                spinButton.disabled = true; // Disable spin if no names
+                return;
+            }
+
+            const anglePerSlice = PI2 / numNames;
+            spinButton.disabled = isSpinning || numNames < 2; // Disable if spinning or less than 2 names
+
+            // Clear canvas and apply current rotation
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.save(); // Save context state before rotating
+            ctx.translate(center, center); // Move origin to center
+            ctx.rotate(currentAngle); // Apply rotation
+            ctx.translate(-center, -center); // Move origin back
+
+            // Draw each slice
+            for (let i = 0; i < numNames; i++) {
+                const sliceStartAngle = i * anglePerSlice;
+                const sliceEndAngle = (i + 1) * anglePerSlice;
+
+                // Draw the slice sector
+                ctx.beginPath();
+                ctx.moveTo(center, center); // Start at the center
+                // Arc parameters: x, y, radius, startAngle, endAngle
+                ctx.arc(center, center, wheelRadius - 2, sliceStartAngle, sliceEndAngle);
+                ctx.closePath(); // Connect back to the center
+
+                // Style the slice
+                ctx.fillStyle = colors[i % colors.length]; // Use generated color, cycle if needed
+                ctx.fill();
+                ctx.lineWidth = 1; // Add a subtle border
+                ctx.strokeStyle = '#fff'; // White border
+                ctx.stroke();
+
+                // Draw the name on the slice
+                drawNameOnSlice(i, names[i], anglePerSlice);
+            }
+
+            ctx.restore(); // Restore context state to undo rotation for next frame
+        }
+
+        function drawNameOnSlice(index, name, anglePerSlice) {
+            ctx.save(); // Save context state for text drawing
+
+            // Calculate angle for the middle of the slice
+            // Add half slice angle to the start angle
+            const textAngle = (index * anglePerSlice) + (anglePerSlice / 2);
+
+            // Move origin to the center for rotation
+            ctx.translate(center, center);
+            ctx.rotate(textAngle); // Rotate context to align with the slice middle
+
+            // Style the text
+            ctx.textAlign = 'center'; // Align text relative to the point (along the radius)
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#ffffff'; // White text for contrast
+            ctx.font = 'bold 14px Inter'; // Adjust font size as needed
+
+            // Adjust maximum width to prevent text overlap
+            const maxTextWidth = wheelRadius * 0.4; // Max width relative to radius
+
+            // Draw text along the radius
+            // Move out from center to position text, adjust 'textRadius' as needed
+            ctx.fillText(name, textRadius, 0, maxTextWidth);
+
+            ctx.restore(); // Restore context state
+        }
+
+        // --- Animation and Logic ---
+
+        function rotateWheel() {
+            // Calculate spin duration and speed randomly
+            spinTime = 0;
+            // More spin velocity variation:
+            spinAngleStart = Math.random() * 15 + 15; // Random initial velocity (radians/sec equivalent)
+            spinTimeTotal = Math.random() * 4000 + 6000; // Random duration (6-10 seconds)
+
+            isSpinning = true;
+            spinButton.disabled = true;
+            cancelAnimationFrame(animationFrameId); // Cancel previous animation if any
+            animateSpin(); // Start the animation loop
+        }
+
+        function animateSpin() {
+            const now = performance.now(); // Use performance.now() for smoother timing
+            if (!spinTime) { spinTime = now; } // Initialize start time on first frame
+            const elapsed = now - spinTime;
+
+            if (elapsed >= spinTimeTotal) {
+                stopSpinning();
+                return; // Stop the animation
+            }
+
+            // Ease-out function (cubic) - more pronounced slowdown
+            const progress = elapsed / spinTimeTotal;
+            const easeOutFactor = 1 - Math.pow(1 - progress, 3); // Cubic ease-out
+
+            // Calculate the total angle rotated based on eased progress
+            // spinAngleStart here acts more like a total rotation multiplier
+            const totalRotation = (spinAngleStart * spinTimeTotal / 1000); // Rough total radians
+            const newAngle = totalRotation * easeOutFactor;
+
+            // Update currentAngle based on the *change* from the last frame if needed,
+            // or simply set it based on total progress. Setting based on progress is simpler here.
+            // We need the final angle, so let's track it continuously.
+            // The *change* in angle per frame determines speed:
+            const frameDuration = 16.67; // approx ms per frame (60fps)
+            const speed = spinAngleStart * (1 - Math.pow(progress, 2)); // Speed decreases quadratically
+            currentAngle += (speed * frameDuration / 1000); // Add angle change for this frame
+            currentAngle %= PI2; // Keep angle within 0 to 2PI
+
+            drawWheel(); // Redraw the wheel at the new angle
+
+            animationFrameId = requestAnimationFrame(animateSpin); // Request next frame
+        }
+
+        function stopSpinning() {
+            isSpinning = false;
+            spinTime = 0; // Reset start time
+            cancelAnimationFrame(animationFrameId); // Ensure animation stops
+
+            const numNames = names.length;
+            if (numNames === 0) return; // Should not happen if button was enabled, but safety check
+
+            const anglePerSlice = PI2 / numNames;
+
+            // --- CORRECTED WINNER CALCULATION ---
+            // The pointer is at the top (12 o'clock), which corresponds to 1.5 * PI radians (or 270 degrees)
+            // in the standard counter-clockwise math coordinate system starting from 3 o'clock.
+            // Canvas rotation `currentAngle` is clockwise.
+            // We want to find the original angle `theta_orig` that has rotated to the pointer position.
+            // pointer_angle = (theta_orig + currentAngle) % PI2
+            // Since canvas uses 0 rad at 3 o'clock and increases clockwise, the pointer at 12 o'clock
+            // corresponds to an angle of 1.5 * PI in that system IF rotation was counter-clockwise.
+            // Because rotation is clockwise, the angle *under* the pointer is effectively
+            // the angle that *started* at (PI2 - currentAngle + 1.5 * PI) % PI2.
+            // Let's simplify: The angle under the pointer (relative to 0 rad = 3 o'clock) is:
+            const pointerAngle = 1.5 * Math.PI; // 270 degrees
+            // The effective angle on the unrotated wheel that is now under the pointer is:
+            let angleUnderPointer = (pointerAngle - currentAngle) % PI2;
+            // Ensure the angle is positive
+            angleUnderPointer = (angleUnderPointer + PI2) % PI2;
+
+            // Determine which slice index this angle falls into
+            // Slice i spans from i * anglePerSlice to (i + 1) * anglePerSlice
+            const winnerIndex = Math.floor(angleUnderPointer / anglePerSlice);
+            // --- END OF CORRECTION ---
+
+
+            if (winnerIndex >= 0 && winnerIndex < names.length) {
+                 lastWinner = names[winnerIndex]; // Store the winner
+            } else {
+                console.error("Could not determine winner index. Angle:", currentAngle, "Calculated Index:", winnerIndex);
+                lastWinner = "Error"; // Fallback
+            }
+
+
+            // Display the winner popup
+            winnerNameDisplay.textContent = lastWinner;
+            winnerPopup.classList.remove('opacity-0', 'pointer-events-none', 'scale-95');
+            winnerPopup.classList.add('opacity-100', 'scale-100');
+
+            spinButton.disabled = names.length < 2; // Re-enable spin button if enough names
+        }
+
+        // --- Event Listeners ---
+
+        nameInput.addEventListener('input', () => {
+            // Trim whitespace, split by newline, filter empty lines
+            names = nameInput.value
+                .split('\n')
+                .map(name => name.trim())
+                .filter(name => name !== '');
+
+            // Regenerate colors only if the number of names changes
+            // or if colors haven't been generated yet
+            if (colors.length !== names.length || colors.length === 0) {
+                 colors = generateColors(names.length);
+            }
+
+            // Reset angle if names change (optional, prevents weird jumps if desired)
+            // currentAngle = 0;
+
+            drawWheel(); // Redraw immediately on input
+        });
+
+        spinButton.addEventListener('click', () => {
+            if (!isSpinning && names.length >= 2) {
+                rotateWheel();
+            }
+        });
+
+        closePopupButton.addEventListener('click', () => {
+            winnerPopup.classList.add('opacity-0', 'pointer-events-none', 'scale-95');
+            winnerPopup.classList.remove('opacity-100', 'scale-100');
+        });
+
+        keepWinnerButton.addEventListener('click', () => {
+             closePopupButton.click(); // Just close the popup
+        });
+
+        removeWinnerButton.addEventListener('click', () => {
+            if (lastWinner) {
+                // Filter out the winning name
+                names = names.filter(name => name !== lastWinner);
+                // Update the textarea
+                nameInput.value = names.join('\n');
+                // Regenerate colors and redraw
+                colors = generateColors(names.length);
+                // It's important to redraw *after* updating names and colors
+                drawWheel();
+                lastWinner = null; // Clear last winner
+            }
+             closePopupButton.click(); // Close the popup
+        });
+
+        // --- Initial Draw ---
+        // Trigger initial population if textarea has content on load
+        nameInput.dispatchEvent(new Event('input'));
+        // Ensure initial draw happens even if textarea is empty
+        if (names.length === 0) {
+            drawWheel();
+        }
+
+
+    </script>
+
+</body>
+</html>
+
